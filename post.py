@@ -2,11 +2,23 @@
 import io, json, re, zipfile, datetime as dt
 
 import streamlit as st
-from docx import Document
-from docx.shared import Pt
-from google import genai
-from google.genai import types
-from PIL import Image, ImageDraw, ImageFont
+
+PIP_NAMES = {"docx": "python-docx", "google": "google-genai", "PIL": "Pillow"}
+try:
+    from docx import Document
+    from docx.shared import Pt
+    from google import genai
+    from google.genai import types
+    from PIL import Image, ImageDraw, ImageFont
+except ModuleNotFoundError as e:  # Streamlit Cloud hides the real error, so show it here
+    missing = (e.name or "").split(".")[0]
+    st.error(f"Missing Python package: **{e.name}**  (pip name: `{PIP_NAMES.get(missing, missing)}`)")
+    st.markdown(
+        "Fix: make sure **`requirements.txt`** is in your GitHub repo, in the same folder as `app.py`, "
+        "and contains:\n```\ngoogle-genai>=1.0.0\npython-docx>=1.1.0\nstreamlit>=1.38.0\nPillow>=10.1.0\n```\n"
+        "Then open **Manage app -> Reboot app**."
+    )
+    st.stop()
 
 st.set_page_config(page_title="Daily Content Bot", page_icon="📊", layout="centered")
 
@@ -117,28 +129,52 @@ WEEKDAY_THEMES = {
 }
 # ==============================================================================
 
-MODEL = st.secrets.get("GEMINI_MODEL", "gemini-3.5-flash")  # change in Secrets if Google renames
 
 
 # ---------------------------- LLM helpers ----------------------------
+def model_chain():
+    """Primary model from Secrets (GEMINI_MODELS or GEMINI_MODEL, comma separated), then fallbacks.
+    The free-tier daily quota is per model, so falling back gives you more free requests."""
+    raw = st.secrets.get("GEMINI_MODELS") or st.secrets.get("GEMINI_MODEL") or ""
+    chain = [m.strip() for m in str(raw).split(",") if m.strip()]
+    for m in ("gemini-3.5-flash", "gemini-3.7-flash", "gemini-2.5-flash"):
+        if m not in chain:
+            chain.append(m)
+    return chain
+
+
+def _retryable(e: Exception) -> bool:
+    t = str(e)
+    return any(k in t for k in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "503", "UNAVAILABLE", "500"))
+
+
 def llm_json(system: str, user: str):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     cfg = types.GenerateContentConfig(
         system_instruction=system, response_mime_type="application/json",
         temperature=0.8, max_output_tokens=16000,
     )
-    err = None
-    for _ in range(2):  # one retry on malformed JSON
-        resp = client.models.generate_content(model=MODEL, contents=user, config=cfg)
-        text = re.sub(r"^```(?:json)?|```$", "", (resp.text or "").strip(), flags=re.M).strip()
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError as e:
-            err = e
-    raise ValueError(f"Gemini returned invalid JSON twice: {err}")
+    last = None
+    for model in model_chain():
+        for attempt in range(2):  # one retry on malformed JSON, same model
+            try:
+                resp = client.models.generate_content(model=model, contents=user, config=cfg)
+            except Exception as e:  # quota / unknown model / overloaded -> try the next model
+                last = e
+                if _retryable(e):
+                    break
+                raise
+            text = re.sub(r"^```(?:json)?|```$", "", (resp.text or "").strip(), flags=re.M).strip()
+            try:
+                st.session_state["model_used"] = model
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                last = e
+        # fall through to the next model
+    raise RuntimeError(f"All Gemini models failed. Last error: {last}")
 
 
-def pick_topic(profile, used_topics, theme_name, theme_desc, level="Beginner"):
+def pick_topic(profile, used_topics, theme_name, theme_desc, level="Beginner", build_only=False):
     system = ("You are a senior content strategist for a data-analytics Instagram creator. You design posts that "
               "teach ONE concrete thing in depth. Return ONLY valid JSON.")
     user = """
@@ -183,10 +219,12 @@ JSON schema:
     user = (user.replace("__PROFILE__", profile).replace("__TODAY__", f"{dt.date.today():%A, %d %B %Y}")
             .replace("__LEVEL__", level).replace("__THEME__", theme_name).replace("__THEME_DESC__", theme_desc)
             .replace("__USED__", json.dumps(used_topics[-40:])))
+    if build_only:
+        return system, user
     return llm_json(system, user)
 
 
-def generate_content(profile, topic, level="Beginner"):
+def generate_content(profile, topic, level="Beginner", build_only=False):
     system = ("You write detailed, accurate Instagram educational content for a working data analyst, matching her voice "
               "from the sample captions. You are precise: all code must run as written on the sample data you provide. "
               "You never invent statistics. Return ONLY valid JSON.")
@@ -285,7 +323,26 @@ CAROUSEL RULES
 - If the format is not Carousel, carousel_slides is []. Fill reel_script only if format is Reel; otherwise [].
 """
     user = user.replace("__PROFILE__", profile).replace("__TOPIC__", json.dumps(topic, indent=2)).replace("__LEVEL__", level)
+    if build_only:
+        return system, user
     return llm_json(system, user)
+
+
+def generate_pack(profile, used_topics, theme_name, theme_desc, level):
+    """ONE Gemini request that returns both the topic and the full content pack."""
+    s1, u1 = pick_topic(profile, used_topics, theme_name, theme_desc, level, build_only=True)
+    s2, u2 = generate_content(profile, "the topic you chose in PART 1", level, build_only=True)
+    system = ("You are a senior content strategist and writer for a data-analytics Instagram creator. "
+              "Return ONLY valid JSON.")
+    user = ("Do TWO PARTS in a single response.\n\n=== PART 1: PICK THE TOPIC ===\n" + u1 +
+            "\n\n=== PART 2: WRITE THE CONTENT PACK for the topic you chose in PART 1 ===\n" + u2 +
+            "\n\n=== OUTPUT FORMAT (overrides the individual output instructions above) ===\n"
+            'Return ONE JSON object and nothing else: {"topic": <the PART 1 JSON object>, '
+            '"content": <the PART 2 JSON object>}')
+    data = llm_json(system, user)
+    if not isinstance(data, dict) or "topic" not in data or "content" not in data:
+        raise ValueError("Gemini response was missing 'topic' or 'content'. Click Try again.")
+    return data["topic"], data["content"]
 
 
 def normalize_slide(sl, i=1):
@@ -772,8 +829,7 @@ def topic_history() -> list:
 def plan_for(day: str, version: int, profile: str, theme_name: str, level: str):
     """Cached per day: reopening the app today reuses the plan; 'version' forces a new one."""
     hist = topic_history()
-    topic = pick_topic(profile, hist, theme_name, WEEKDAY_THEMES[theme_name], level)
-    content = generate_content(profile, topic, level)
+    topic, content = generate_pack(profile, hist, theme_name, WEEKDAY_THEMES[theme_name], level)
     hist.append(topic["topic"])
     return topic, content, build_docx(topic, content)
 
@@ -783,6 +839,21 @@ st.title("📊 Daily Content Bot - @analyst_shubhi")
 
 if "version" not in st.session_state:
     st.session_state.version = 0
+if "applied" not in st.session_state:
+    st.session_state.applied = None
+
+
+def friendly_error(e: Exception) -> str:
+    t = str(e)
+    if "RESOURCE_EXHAUSTED" in t or "429" in t:
+        m = re.search(r"retry in ([0-9hms\.]+)", t)
+        wait = f" Google says retry in about {m.group(1)}." if m else ""
+        return ("**Gemini free-tier limit reached** (about 20 requests per day per model)." + wait +
+                "\n\nOptions: wait and click **Try again**; add more models in Secrets, e.g. "
+                '`GEMINI_MODELS = "gemini-3.5-flash,gemini-3.7-flash,gemini-2.5-flash"` (each has its own free quota); '
+                "or enable billing in Google AI Studio (a post costs a fraction of a cent).")
+    return f"Generation failed: {t}"
+
 
 with st.expander("Creator profile (applies to this session; edit DEFAULT_PROFILE in code to make permanent)"):
     profile = st.text_area("Profile", DEFAULT_PROFILE, height=350)
@@ -794,11 +865,37 @@ theme_pick = st.selectbox("Content theme", theme_names, index=dt.date.today().we
 st.caption(WEEKDAY_THEMES[theme_pick])
 level = st.radio("Difficulty", ["Beginner", "Beginner+", "Intermediate"], horizontal=True,
                  help="Beginner = basics a fresher meets in the first months. Keep it on Beginner for your audience.")
+
+current = (profile, theme_pick, level)
+if st.session_state.applied is None:  # first load: generate automatically with the defaults
+    st.session_state.applied = current
+if current != st.session_state.applied:
+    st.warning("Settings changed. Click below to apply (uses 1 Gemini request).")
+    if st.button("Generate with new settings", type="primary"):
+        st.session_state.applied = current
+        st.session_state.version += 1
+        st.rerun()
+
+p_, t_, l_ = st.session_state.applied
+key = (today, st.session_state.version, p_, t_, l_)
+
+if st.session_state.get("err_key") == key:  # failed earlier: do NOT auto-retry (saves quota)
+    st.error(st.session_state.get("err_msg", "Generation failed."))
+    if st.button("Try again"):
+        st.session_state.err_key = None
+        st.rerun()
+    st.stop()
+
 try:
-    with st.spinner("Picking today's topic and writing your content..."):
-        topic, c, docx_bytes = plan_for(today, st.session_state.version, profile, theme_pick, level)
+    with st.spinner("Picking today's topic and writing your content (1 Gemini request)..."):
+        topic, c, docx_bytes = plan_for(*key)
 except Exception as e:
-    st.error(f"Generation failed: {e}")
+    st.session_state.err_key = key
+    st.session_state.err_msg = friendly_error(e)
+    st.error(st.session_state.err_msg)
+    if st.button("Try again"):
+        st.session_state.err_key = None
+        st.rerun()
     st.stop()
 
 def copy_box(text):

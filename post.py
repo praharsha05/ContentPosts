@@ -148,8 +148,16 @@ def _retryable(e: Exception) -> bool:
     return any(k in t for k in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "503", "UNAVAILABLE", "500"))
 
 
+def _is_timeout(e: Exception) -> bool:
+    t = (type(e).__name__ + " " + str(e)).lower()
+    return any(k in t for k in ("timeout", "timed out", "deadline_exceeded", "504"))
+
+
 def llm_json(system: str, user: str):
-    client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    try:  # 100 s limit per request so the page can never spin forever
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"], http_options=types.HttpOptions(timeout=100_000))
+    except (AttributeError, TypeError):
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     cfg = types.GenerateContentConfig(
         system_instruction=system, response_mime_type="application/json",
         temperature=0.8, max_output_tokens=16000,
@@ -161,6 +169,8 @@ def llm_json(system: str, user: str):
                 resp = client.models.generate_content(model=model, contents=user, config=cfg)
             except Exception as e:  # quota / unknown model / overloaded -> try the next model
                 last = e
+                if _is_timeout(e):  # slow response: stop here instead of waiting through every model
+                    raise RuntimeError("TIMEOUT: Gemini took too long to answer.")
                 if _retryable(e):
                     break
                 raise
@@ -852,6 +862,10 @@ def friendly_error(e: Exception) -> str:
                 "\n\nOptions: wait and click **Try again**; add more models in Secrets, e.g. "
                 '`GEMINI_MODELS = "gemini-3.5-flash,gemini-3.7-flash,gemini-2.5-flash"` (each has its own free quota); '
                 "or enable billing in Google AI Studio (a post costs a fraction of a cent).")
+    if "TIMEOUT" in t:
+        return ("**Gemini took too long to answer** (over 100 seconds). This is usually temporary. "
+                "Click **Try again**. If it keeps happening, switch to a faster model in Secrets, e.g. "
+                '`GEMINI_MODELS = "gemini-2.5-flash,gemini-3.5-flash"`.')
     return f"Generation failed: {t}"
 
 
@@ -887,7 +901,7 @@ if st.session_state.get("err_key") == key:  # failed earlier: do NOT auto-retry 
     st.stop()
 
 try:
-    with st.spinner("Picking today's topic and writing your content (1 Gemini request)..."):
+    with st.spinner("Picking today's topic and writing your content (1 Gemini request, usually 30-90 seconds)..."):
         topic, c, docx_bytes = plan_for(*key)
 except Exception as e:
     st.session_state.err_key = key

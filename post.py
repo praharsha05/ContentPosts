@@ -894,8 +894,13 @@ level = st.radio("Difficulty", ["Beginner", "Beginner+", "Intermediate"], horizo
                  help="Beginner = basics a fresher meets in the first months. Keep it on Beginner for your audience.")
 
 current = (profile, theme_pick, level)
-if st.session_state.applied is None:  # first load: generate automatically with the defaults
-    st.session_state.applied = current
+if st.session_state.applied is None:  # nothing generated yet: wait for the button (no auto-generation)
+    st.info("Nothing is generated automatically. Click the button to create today's content (uses 1 Gemini request).")
+    if st.button("✨ Generate", type="primary", width="stretch"):
+        st.session_state.applied = current
+        st.session_state.version += 1
+        st.rerun()
+    st.stop()
 if current != st.session_state.applied:
     st.warning("Settings changed. Click below to apply (uses 1 Gemini request).")
     if st.button("Generate with new settings", type="primary"):
@@ -943,12 +948,16 @@ if c.get("alt_titles"):
 st.markdown("### ✍️ Caption")
 copy_box(caption_full)
 
-b1, b2 = st.columns(2)
+b1, b2, b3 = st.columns(3)
 b1.download_button(
     "⬇️ Download .docx", docx_bytes, file_name=f"content_plan_{today}.docx",
     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     width="stretch")
-if b2.button("🔄 Different topic", width="stretch"):
+if b2.button("✨ Generate", width="stretch"):
+    st.session_state.applied = current
+    st.session_state.version += 1
+    st.rerun()
+if b3.button("🔄 Different topic", width="stretch"):
     st.session_state.version += 1
     st.rerun()
 

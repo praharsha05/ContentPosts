@@ -828,6 +828,19 @@ def zip_files(files):
     return b.getvalue()
 
 
+def pdf_from_pngs(files, title="Instagram carousel"):
+    """All slide PNGs -> one PDF, one slide per page, high quality so code text stays sharp."""
+    pages = [Image.open(io.BytesIO(data)).convert("RGB") for _, data in files]
+    buf = io.BytesIO()
+    kw = dict(save_all=True, append_images=pages[1:], resolution=150.0)  # 1080x1350 px -> 7.2 x 9 in pages
+    try:
+        pages[0].save(buf, "PDF", quality=95, subsampling=0, title=title, author="@analyst_shubhi", **kw)
+    except (TypeError, ValueError):  # older Pillow without these options
+        buf = io.BytesIO()
+        pages[0].save(buf, "PDF", **kw)
+    return buf.getvalue()
+
+
 # ---------------------------- State & caching ----------------------------
 @st.cache_resource
 def topic_history() -> list:
@@ -943,9 +956,13 @@ if b2.button("🔄 Different topic", width="stretch"):
 st.markdown("### 🎨 Slides (PNG)")
 theme_name = st.selectbox("Theme", list(THEMES), key="theme")
 files = make_images(topic, c, theme_name)
-st.download_button(f"⬇️ Download all {len(files)} PNG(s) (.zip)", zip_files(files),
-                   file_name=f"{today}_{theme_name.lower().replace(' ', '_')}_slides.zip",
-                   mime="application/zip", type="primary", width="stretch")
+dl_zip, dl_pdf = st.columns(2)
+dl_zip.download_button(f"⬇️ All {len(files)} PNG(s) (.zip)", zip_files(files),
+                       file_name=f"{today}_{theme_name.lower().replace(' ', '_')}_slides.zip",
+                       mime="application/zip", width="stretch")
+dl_pdf.download_button(f"⬇️ Download PDF ({len(files)} pages)", pdf_from_pngs(files, post_title),
+                       file_name=f"{today}_{theme_name.lower().replace(' ', '_')}_slides.pdf",
+                       mime="application/pdf", type="primary", width="stretch")
 cols = st.columns(3)
 for i, (name, data) in enumerate(files):
     with cols[i % 3]:

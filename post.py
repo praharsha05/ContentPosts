@@ -934,8 +934,8 @@ b1, b2 = st.columns(2)
 b1.download_button(
     "⬇️ Download .docx", docx_bytes, file_name=f"content_plan_{today}.docx",
     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    use_container_width=True)
-if b2.button("🔄 Different topic", use_container_width=True):
+    width="stretch")
+if b2.button("🔄 Different topic", width="stretch"):
     st.session_state.version += 1
     st.rerun()
 
@@ -945,13 +945,13 @@ theme_name = st.selectbox("Theme", list(THEMES), key="theme")
 files = make_images(topic, c, theme_name)
 st.download_button(f"⬇️ Download all {len(files)} PNG(s) (.zip)", zip_files(files),
                    file_name=f"{today}_{theme_name.lower().replace(' ', '_')}_slides.zip",
-                   mime="application/zip", type="primary", use_container_width=True)
+                   mime="application/zip", type="primary", width="stretch")
 cols = st.columns(3)
 for i, (name, data) in enumerate(files):
     with cols[i % 3]:
-        st.image(data, use_container_width=True)
+        st.image(data, width="stretch")
         st.download_button("PNG", data, file_name=name, mime="image/png", key=f"png_{i}_{theme_name}",
-                           use_container_width=True)
+                           width="stretch")
 
 # ---- everything else, collapsed
 with st.expander("Full content pack (scenario, slide text, code, gotchas...)"):

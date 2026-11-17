@@ -133,13 +133,20 @@ WEEKDAY_THEMES = {
 
 # ---------------------------- LLM helpers ----------------------------
 def model_chain():
-    """Primary model from Secrets (GEMINI_MODELS or GEMINI_MODEL, comma separated), then fallbacks.
-    The free-tier daily quota is per model, so falling back gives you more free requests."""
+    """Models come only from Streamlit Secrets. Order = priority (first is tried first).
+    Accepts a comma-separated string or a TOML list, under GEMINI_MODELS (or GEMINI_MODEL)."""
     raw = st.secrets.get("GEMINI_MODELS") or st.secrets.get("GEMINI_MODEL") or ""
-    chain = [m.strip() for m in str(raw).split(",") if m.strip()]
-    for m in ("gemini-3.5-flash", "gemini-3.7-flash", "gemini-2.5-flash"):
-        if m not in chain:
+    if isinstance(raw, str):
+        raw = raw.split(",")
+    chain = []
+    for m in raw:
+        m = str(m).strip()
+        if m and m not in chain:
             chain.append(m)
+    if not chain:
+        raise RuntimeError(
+            'No Gemini model configured. Add this to Secrets: GEMINI_MODELS = "gemini-2.5-flash"'
+        )
     return chain
 
 

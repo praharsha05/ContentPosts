@@ -1,5 +1,6 @@
 """Daily Instagram content bot for @analyst_shubhi - single-file Streamlit app (Gemini)."""
 import io, json, re, zipfile, datetime as dt
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -15,12 +16,19 @@ except ModuleNotFoundError as e:  # Streamlit Cloud hides the real error, so sho
     st.error(f"Missing Python package: **{e.name}**  (pip name: `{PIP_NAMES.get(missing, missing)}`)")
     st.markdown(
         "Fix: make sure **`requirements.txt`** is in your GitHub repo, in the same folder as `app.py`, "
-        "and contains:\n```\ngoogle-genai>=1.0.0\npython-docx>=1.1.0\nstreamlit>=1.38.0\nPillow>=10.1.0\n```\n"
+        "and contains:\n```\ngoogle-genai>=1.0.0\npython-docx>=1.1.0\nstreamlit>=1.50.0\nPillow>=10.1.0\n```\n"
         "Then open **Manage app -> Reboot app**."
     )
     st.stop()
 
 st.set_page_config(page_title="Daily Content Bot", page_icon="📊", layout="centered")
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def now_ist() -> dt.datetime:
+    return dt.datetime.now(IST)
+
 
 # ======================= EDIT THIS: your creator profile =======================
 DEFAULT_PROFILE = """
@@ -130,12 +138,46 @@ WEEKDAY_THEMES = {
 # ==============================================================================
 
 
+# ---------------------------- Greeting banner ----------------------------
+def greeting_banner():
+    """Always-scrolling greeting strip that changes with the time of day (IST)."""
+    hour = now_ist().hour
+    if 5 <= hour < 12:
+        msg, icons = "Good Morning, Sunshine!", "☀️ 💖 🌞 💕 🧡 💗"
+        bg, fg = "linear-gradient(90deg,#fde68a,#fbcfe8,#fde68a)", "#7c2d12"
+    elif 12 <= hour < 17:
+        msg, icons = "Good Afternoon!", "🌸 🌼 🌻 🌷 🌺 🦋"
+        bg, fg = "linear-gradient(90deg,#bbf7d0,#fef9c3,#fbcfe8)", "#14532d"
+    elif 17 <= hour < 20:
+        msg, icons = "Good Evening!", "🌅 🧡 🍃 ✨ ☕ 🌇"
+        bg, fg = "linear-gradient(90deg,#fdba74,#f9a8d4,#c4b5fd)", "#4a044e"
+    else:
+        msg, icons = "Good Night, Sweet Dreams!", "🌙 ⭐ 🧸 🕯️ ☕ 🛏️ 😴"
+        bg, fg = "linear-gradient(90deg,#1e1b4b,#312e81,#1e1b4b)", "#e0e7ff"
+
+    item = f"{icons} &nbsp; <b>{msg}</b> &nbsp; {icons} &nbsp;&nbsp;&nbsp;&nbsp;"
+    track = item * 3
+    # keep the HTML flush-left, otherwise Markdown treats indented lines as a code block
+    html = f"""<style>
+.greet-bar {{ overflow:hidden; white-space:nowrap; border-radius:14px; padding:10px 0;
+  margin-bottom:12px; background:{bg}; color:{fg}; font-size:1.1rem; }}
+.greet-track {{ display:flex; width:max-content; animation:greet-scroll 28s linear infinite; }}
+.greet-track span {{ white-space:pre; }}
+.greet-bar:hover .greet-track {{ animation-play-state:paused; }}
+@keyframes greet-scroll {{ from {{ transform:translateX(0); }} to {{ transform:translateX(-50%); }} }}
+</style>
+<div class="greet-bar"><div class="greet-track"><span>{track}</span><span>{track}</span></div></div>"""
+    st.markdown(html, unsafe_allow_html=True)
+
 
 # ---------------------------- LLM helpers ----------------------------
 def model_chain():
     """Models come only from Streamlit Secrets. Order = priority (first is tried first).
     Accepts a comma-separated string or a TOML list, under GEMINI_MODELS (or GEMINI_MODEL)."""
-    raw = st.secrets.get("GEMINI_MODELS") or st.secrets.get("GEMINI_MODEL") or ""
+    try:
+        raw = st.secrets.get("GEMINI_MODELS") or st.secrets.get("GEMINI_MODEL") or ""
+    except Exception:  # no secrets file at all
+        raw = ""
     if isinstance(raw, str):
         raw = raw.split(",")
     chain = []
@@ -152,7 +194,8 @@ def model_chain():
 
 def _retryable(e: Exception) -> bool:
     t = str(e)
-    return any(k in t for k in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "503", "UNAVAILABLE", "500"))
+    return any(k in t for k in ("429", "RESOURCE_EXHAUSTED", "404", "NOT_FOUND", "503", "UNAVAILABLE",
+                                "500 ", "INTERNAL"))
 
 
 def _is_timeout(e: Exception) -> bool:
@@ -167,7 +210,7 @@ def llm_json(system: str, user: str):
         client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     cfg = types.GenerateContentConfig(
         system_instruction=system, response_mime_type="application/json",
-        temperature=0.8, max_output_tokens=16000,
+        temperature=0.8, max_output_tokens=24000,  # headroom: thinking tokens count toward this limit
     )
     last = None
     for model in model_chain():
@@ -233,7 +276,7 @@ JSON schema:
  "work_scenario": str,   // one sentence: the stakeholder request / work situation that triggers this
  "angle": str, "why_today": str, "target_pain_point": str}
 """
-    user = (user.replace("__PROFILE__", profile).replace("__TODAY__", f"{dt.date.today():%A, %d %B %Y}")
+    user = (user.replace("__PROFILE__", profile).replace("__TODAY__", f"{now_ist():%A, %d %B %Y}")
             .replace("__LEVEL__", level).replace("__THEME__", theme_name).replace("__THEME_DESC__", theme_desc)
             .replace("__USED__", json.dumps(used_topics[-40:])))
     if build_only:
@@ -385,12 +428,12 @@ def normalize_slide(sl, i=1):
 def build_docx(topic, c) -> bytes:
     d = Document()
     d.styles["Normal"].font.size = Pt(11)
-    d.add_heading(f"Content Plan - {dt.date.today():%d %b %Y}", 0)
+    d.add_heading(f"Content Plan - {now_ist():%d %b %Y}", 0)
 
     d.add_heading("Post title", 1)
-    d.add_paragraph(c.get("post_title") or topic["topic"]).runs[0].bold = True
+    d.add_paragraph(c.get("post_title") or topic.get("topic", "")).runs[0].bold = True
     d.add_heading("Topic", 1)
-    d.add_paragraph(topic["topic"]).runs[0].bold = True
+    d.add_paragraph(topic.get("topic", "")).runs[0].bold = True
     for k in ("pillar", "format", "angle", "why_today", "target_pain_point"):
         p = d.add_paragraph()
         p.add_run(k.replace("_", " ").title() + ": ").bold = True
@@ -400,8 +443,8 @@ def build_docx(topic, c) -> bytes:
     d.add_paragraph(c.get("work_scenario") or topic.get("work_scenario", ""))
 
     d.add_heading("Hook options", 1)
-    for h in c["hooks"]:
-        d.add_paragraph(h, style="List Number")
+    for h in c.get("hooks", []):
+        d.add_paragraph(str(h), style="List Number")
 
     if c.get("sample_data") or c.get("expected_output"):
         d.add_heading("Sample data & expected output", 1)
@@ -425,7 +468,9 @@ def build_docx(topic, c) -> bytes:
             t.rows[0].cells[i].text = h
         for r in c["reel_script"]:
             cells = t.add_row().cells
-            cells[0].text, cells[1].text, cells[2].text = r["time"], r["visual"], r["voiceover"]
+            cells[0].text = str(r.get("time", ""))
+            cells[1].text = str(r.get("visual", ""))
+            cells[2].text = str(r.get("voiceover", ""))
     if c.get("carousel_slides"):
         d.add_heading("Carousel slides", 1)
         for i, raw in enumerate(c["carousel_slides"], 1):
@@ -452,15 +497,15 @@ def build_docx(topic, c) -> bytes:
             r.font.name = "Consolas"
 
     d.add_heading("Caption", 1)
-    d.add_paragraph(c["caption"])
-    p = d.add_paragraph(); p.add_run("CTA: ").bold = True; p.add_run(c["cta"])
-    d.add_paragraph(" ".join(c["hashtags"]))
+    d.add_paragraph(c.get("caption", ""))
+    p = d.add_paragraph(); p.add_run("CTA: ").bold = True; p.add_run(str(c.get("cta", "")))
+    d.add_paragraph(" ".join(c.get("hashtags", [])))
     if c.get("lead_magnet_keyword"):
         p = d.add_paragraph(); p.add_run("Lead magnet keyword: ").bold = True; p.add_run(c["lead_magnet_keyword"])
     if c.get("gotchas"):
         d.add_heading("Gotchas", 1)
         for g in c["gotchas"]:
-            d.add_paragraph(g, style="List Bullet")
+            d.add_paragraph(str(g), style="List Bullet")
     if c.get("interview_angle"):
         d.add_heading("Interview angle", 1)
         d.add_paragraph(c["interview_angle"])
@@ -470,15 +515,14 @@ def build_docx(topic, c) -> bytes:
                 "Check the SQL dialect (PostgreSQL / MySQL / SQL Server) matches what you say."):
         d.add_paragraph(chk, style="List Bullet")
     d.add_heading("Story ideas", 1)
-    for s in c["story_ideas"]:
-        d.add_paragraph(s, style="List Bullet")
-    p = d.add_paragraph(); p.add_run("Cover text: ").bold = True; p.add_run(c["cover_text"])
-    p = d.add_paragraph(); p.add_run("Best time to post: ").bold = True; p.add_run(c["best_time_to_post"])
+    for s in c.get("story_ideas", []):
+        d.add_paragraph(str(s), style="List Bullet")
+    p = d.add_paragraph(); p.add_run("Cover text: ").bold = True; p.add_run(str(c.get("cover_text", "")))
+    p = d.add_paragraph(); p.add_run("Best time to post: ").bold = True; p.add_run(str(c.get("best_time_to_post", "")))
 
     buf = io.BytesIO()
     d.save(buf)
     return buf.getvalue()
-
 
 
 # ---------------------------- PNG rendering ----------------------------
@@ -541,10 +585,10 @@ def font(kind: str, size: int):
 
 
 def clean(text: str) -> str:
-    """DejaVu has no emoji glyphs, so convert/remove them."""
+    """DejaVu has no emoji glyphs, so convert/remove them (keeps the check/cross marks DejaVu does have)."""
     text = str(text).replace("\u27a1\ufe0f", "\u2192").replace("\u27a1", "\u2192")
     text = re.sub(r"(\d)\ufe0f?\u20e3", r"\1.", text)
-    text = re.sub(r"[\U0001F000-\U0001FFFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]", "", text)
+    text = re.sub(r"[\U0001F000-\U0001FFFF\u2600-\u2712\u2719-\u27BF\u2B00-\u2BFF\uFE0F\u200d]", "", text)
     return re.sub(r"[ \t]+", " ", text).strip()
 
 
@@ -589,7 +633,7 @@ def draw_code(draw, code, th, x, y, w, h):
     code = code.replace("\t", "    ").strip("\n")
     pad = 30
     ix, iw, ih = x + pad, w - 2 * pad, h - 66 - pad
-    lines = code.split("\n")
+    lines = code.split("\n") or [""]
     size = 40
     while size > 18:
         f = font("mono", size)
@@ -624,7 +668,6 @@ def draw_code(draw, code, th, x, y, w, h):
             draw.text((cx, ly), t, font=f, fill=col)
             cx += draw.textlength(t, font=f)
         ly += size * 1.32
-
 
     return panel_h
 
@@ -817,9 +860,10 @@ def make_images(topic, c, theme_name):
         for i, raw in enumerate(slides, 1):
             out.append((f"slide_{i:02d}.png", render_slide(normalize_slide(raw, i), i, n, th)))
     else:  # Reel / single image -> cover thumbnail
+        hooks = c.get("hooks") or [""]
         cover = normalize_slide(dict(layout="cover", kicker=topic.get("pillar", ""),
-                                     title=c.get("cover_text") or topic["topic"],
-                                     subtitle=c["hooks"][0], callout=c.get("cta", "")), 1)
+                                     title=c.get("cover_text") or topic.get("topic", ""),
+                                     subtitle=hooks[0], callout=c.get("cta", "")), 1)
         out.append(("cover.png", render_slide(cover, 1, 1, th)))
     files = []
     for name, im in out:
@@ -860,11 +904,19 @@ def plan_for(day: str, version: int, profile: str, theme_name: str, level: str):
     """Cached per day: reopening the app today reuses the plan; 'version' forces a new one."""
     hist = topic_history()
     topic, content = generate_pack(profile, hist, theme_name, WEEKDAY_THEMES[theme_name], level)
-    hist.append(topic["topic"])
+    hist.append(topic.get("topic", ""))
     return topic, content, build_docx(topic, content)
 
 
+@st.cache_data(show_spinner=False)
+def render_exports(topic: dict, c: dict, theme_name: str, title: str):
+    """Cached so PNGs / ZIP / PDF are not rebuilt on every rerun (e.g. after a download click)."""
+    files = make_images(topic, c, theme_name)
+    return files, zip_files(files), pdf_from_pngs(files, title)
+
+
 # ---------------------------- UI ----------------------------
+greeting_banner()
 st.title("📊 Daily Content Bot - @analyst_shubhi")
 
 if "version" not in st.session_state:
@@ -892,9 +944,10 @@ def friendly_error(e: Exception) -> str:
 with st.expander("Creator profile (applies to this session; edit DEFAULT_PROFILE in code to make permanent)"):
     profile = st.text_area("Profile", DEFAULT_PROFILE, height=350)
 
-today = dt.date.today().isoformat()
+today_date = now_ist().date()
+today = today_date.isoformat()
 theme_names = list(WEEKDAY_THEMES)
-theme_pick = st.selectbox("Content theme", theme_names, index=dt.date.today().weekday(),
+theme_pick = st.selectbox("Content theme", theme_names, index=today_date.weekday(),
                           help="Defaults to today's weekday theme; change it to explore other content types.")
 st.caption(WEEKDAY_THEMES[theme_pick])
 level = st.radio("Difficulty", ["Beginner", "Beginner+", "Intermediate"], horizontal=True,
@@ -937,6 +990,7 @@ except Exception as e:
         st.rerun()
     st.stop()
 
+
 def copy_box(text):
     try:
         st.code(text, language=None, wrap_lines=True)  # has a copy button
@@ -944,39 +998,36 @@ def copy_box(text):
         st.code(text, language=None)
 
 
-post_title = c.get("post_title") or topic["topic"]
+post_title = c.get("post_title") or topic.get("topic", "")
 caption_full = (c.get("caption", "").strip() + "\n\n" + " ".join(c.get("hashtags", []))).strip()
 
-st.caption(f"{topic['format']} · {topic['pillar']} · best time: {c.get('best_time_to_post', '')}")
+st.caption(f"{topic.get('format', '')} · {topic.get('pillar', '')} · best time: {c.get('best_time_to_post', '')}")
 st.markdown("### 📝 Post title")
 copy_box(post_title)
 if c.get("alt_titles"):
-    st.caption("Other options: " + "  |  ".join(c["alt_titles"]))
+    st.caption("Other options: " + "  |  ".join(str(a) for a in c["alt_titles"]))
 st.markdown("### ✍️ Caption")
 copy_box(caption_full)
 
-b1, b2, b3 = st.columns(3)
+b1, b2 = st.columns(2)
 b1.download_button(
     "⬇️ Download .docx", docx_bytes, file_name=f"content_plan_{today}.docx",
     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     width="stretch")
-if b2.button("✨ Generate", width="stretch"):
+if b2.button("🔄 Different topic", width="stretch"):
     st.session_state.applied = current
-    st.session_state.version += 1
-    st.rerun()
-if b3.button("🔄 Different topic", width="stretch"):
     st.session_state.version += 1
     st.rerun()
 
 # ---- PNG export
 st.markdown("### 🎨 Slides (PNG)")
 theme_name = st.selectbox("Theme", list(THEMES), key="theme")
-files = make_images(topic, c, theme_name)
+files, zip_bytes, pdf_bytes = render_exports(topic, c, theme_name, post_title)
 dl_zip, dl_pdf = st.columns(2)
-dl_zip.download_button(f"⬇️ All {len(files)} PNG(s) (.zip)", zip_files(files),
+dl_zip.download_button(f"⬇️ All {len(files)} PNG(s) (.zip)", zip_bytes,
                        file_name=f"{today}_{theme_name.lower().replace(' ', '_')}_slides.zip",
                        mime="application/zip", width="stretch")
-dl_pdf.download_button(f"⬇️ Download PDF ({len(files)} pages)", pdf_from_pngs(files, post_title),
+dl_pdf.download_button(f"⬇️ Download PDF ({len(files)} pages)", pdf_bytes,
                        file_name=f"{today}_{theme_name.lower().replace(' ', '_')}_slides.pdf",
                        mime="application/pdf", type="primary", width="stretch")
 cols = st.columns(3)
@@ -988,13 +1039,13 @@ for i, (name, data) in enumerate(files):
 
 # ---- everything else, collapsed
 with st.expander("Full content pack (scenario, slide text, code, gotchas...)"):
-    st.markdown(f"**Topic:** {topic['topic']}")
-    st.write(f"**Angle:** {topic['angle']}")
-    st.write(f"**Why today:** {topic['why_today']}")
+    st.markdown(f"**Topic:** {topic.get('topic', '')}")
+    st.write(f"**Angle:** {topic.get('angle', '')}")
+    st.write(f"**Why today:** {topic.get('why_today', '')}")
     st.write(f"**Work scenario:** {c.get('work_scenario') or topic.get('work_scenario', '')}")
     st.markdown("**Hooks**")
-    for h in c["hooks"]:
-        st.write("- " + h)
+    for h in c.get("hooks", []):
+        st.write("- " + str(h))
     if c.get("sample_data") or c.get("expected_output"):
         st.markdown("**Sample data & expected output**")
         if c.get("sample_data"):
@@ -1029,12 +1080,12 @@ with st.expander("Full content pack (scenario, slide text, code, gotchas...)"):
     if c.get("gotchas"):
         st.markdown("**Gotchas**")
         for g in c["gotchas"]:
-            st.write("- " + g)
+            st.write("- " + str(g))
     if c.get("interview_angle"):
         st.write(f"**Interview angle:** {c['interview_angle']}")
     if c.get("lead_magnet_keyword"):
         st.write(f"**Lead magnet keyword:** {c['lead_magnet_keyword']}")
     st.markdown("**Story ideas**")
-    for s_ in c["story_ideas"]:
-        st.write("- " + s_)
-    st.write(f"**Cover text:** {c['cover_text']}")
+    for s_ in c.get("story_ideas", []):
+        st.write("- " + str(s_))
+    st.write(f"**Cover text:** {c.get('cover_text', '')}")

@@ -143,27 +143,31 @@ def greeting_banner():
     """Always-scrolling greeting strip that changes with the time of day (IST)."""
     hour = now_ist().hour
     if 5 <= hour < 12:
-        msg, icons = "Good Morning, Sunshine ", "☀️ ☕ 💖 🌞 💕 🧡 💗"
+        msg, icons = "Good Morning, Sunshine!", "☀️ ☕ 💖 🌞 💕 🧡 💗"
         bg, fg = "linear-gradient(90deg,#fde68a,#fbcfe8,#fde68a)", "#7c2d12"
     elif 12 <= hour < 17:
-        msg, icons = "Good Afternoon Indu ", "🌸 🌼 🌻 🌷 🌺 🦋"
+        msg, icons = "Good Afternoon Indu !", "🌸 🌼 🌻 🌷 🌺 🦋"
         bg, fg = "linear-gradient(90deg,#bbf7d0,#fef9c3,#fbcfe8)", "#14532d"
     elif 17 <= hour < 20:
-        msg, icons = "Good Evening Indu ", "🌅 🧡 🍃 ✨ ☕ 🌇"
+        msg, icons = "Good Evening Indu !", "🌅 🧡 🍃 ✨ ☕ 🌇"
         bg, fg = "linear-gradient(90deg,#fdba74,#f9a8d4,#c4b5fd)", "#4a044e"
     else:
-        msg, icons = "Good Night , Sweet Dreams!", "🌙 ⭐ 🧸 🕯️ ☕ 🛏️ 😴"
+        msg, icons = "Good Night Indu, Sweet Dreams !", "🌙 ⭐ 🧸 🕯️ ☕ 🛏️ 😴"
         bg, fg = "linear-gradient(90deg,#1e1b4b,#312e81,#1e1b4b)", "#e0e7ff"
 
     item = f"{icons} &nbsp; <b>{msg}</b> &nbsp; {icons} &nbsp;&nbsp;&nbsp;&nbsp;"
     track = item * 3
     # keep the HTML flush-left, otherwise Markdown treats indented lines as a code block
     html = f"""<style>
-.greet-bar {{ overflow:hidden; white-space:nowrap; border-radius:14px; padding:10px 0;
-  margin-bottom:12px; background:{bg}; color:{fg}; font-size:1.1rem; }}
+.greet-bar {{ position:fixed; top:0; left:0; right:0; z-index:1000001; height:64px;
+  display:flex; align-items:center; overflow:hidden; white-space:nowrap;
+  background:{bg}; color:{fg}; font-size:1.7rem; box-shadow:0 2px 10px rgba(0,0,0,.25); }}
 .greet-track {{ display:flex; width:max-content; animation:greet-scroll 28s linear infinite; }}
 .greet-track span {{ white-space:pre; }}
 .greet-bar:hover .greet-track {{ animation-play-state:paused; }}
+header[data-testid="stHeader"] {{ top:64px; }}
+[data-testid="stAppViewContainer"] .main .block-container,
+[data-testid="stMainBlockContainer"] {{ padding-top:7.5rem !important; }}
 @keyframes greet-scroll {{ from {{ transform:translateX(0); }} to {{ transform:translateX(-50%); }} }}
 </style>
 <div class="greet-bar"><div class="greet-track"><span>{track}</span><span>{track}</span></div></div>"""

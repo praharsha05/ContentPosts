@@ -143,16 +143,16 @@ def greeting_banner():
     """Always-scrolling greeting strip that changes with the time of day (IST)."""
     hour = now_ist().hour
     if 5 <= hour < 12:
-        msg, icons = "Good Morning, Sunshine!", "☀️ 💖 🌞 💕 🧡 💗"
+        msg, icons = "Good Morning, Sunshine ", "☀️ 💖 🌞 💕 🧡 💗"
         bg, fg = "linear-gradient(90deg,#fde68a,#fbcfe8,#fde68a)", "#7c2d12"
     elif 12 <= hour < 17:
-        msg, icons = "Good Afternoon!", "🌸 🌼 🌻 🌷 🌺 🦋"
+        msg, icons = "Good Afternoon Indu ", "🌸 🌼 🌻 🌷 🌺 🦋"
         bg, fg = "linear-gradient(90deg,#bbf7d0,#fef9c3,#fbcfe8)", "#14532d"
     elif 17 <= hour < 20:
-        msg, icons = "Good Evening!", "🌅 🧡 🍃 ✨ ☕ 🌇"
+        msg, icons = "Good Evening Indu ", "🌅 🧡 🍃 ✨ ☕ 🌇"
         bg, fg = "linear-gradient(90deg,#fdba74,#f9a8d4,#c4b5fd)", "#4a044e"
     else:
-        msg, icons = "Good Night, Sweet Dreams!", "🌙 ⭐ 🧸 🕯️ ☕ 🛏️ 😴"
+        msg, icons = "Good Night , Sweet Dreams!", "🌙 ⭐ 🧸 🕯️ ☕ 🛏️ 😴"
         bg, fg = "linear-gradient(90deg,#1e1b4b,#312e81,#1e1b4b)", "#e0e7ff"
 
     item = f"{icons} &nbsp; <b>{msg}</b> &nbsp; {icons} &nbsp;&nbsp;&nbsp;&nbsp;"

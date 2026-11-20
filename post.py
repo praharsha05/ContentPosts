@@ -143,7 +143,7 @@ def greeting_banner():
     """Always-scrolling greeting strip that changes with the time of day (IST)."""
     hour = now_ist().hour
     if 5 <= hour < 12:
-        msg, icons = "Good Morning, Sunshine ", "☀️ 💖 🌞 💕 🧡 💗"
+        msg, icons = "Good Morning, Sunshine ", "☀️ ☕ 💖 🌞 💕 🧡 💗"
         bg, fg = "linear-gradient(90deg,#fde68a,#fbcfe8,#fde68a)", "#7c2d12"
     elif 12 <= hour < 17:
         msg, icons = "Good Afternoon Indu ", "🌸 🌼 🌻 🌷 🌺 🦋"
